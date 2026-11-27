@@ -4,18 +4,14 @@ from dataclasses import dataclass
 from typing import Literal
 import logging
 
+from app.rules.config import RulesConfig
+
 logger = logging.getLogger(__name__)
 
 Decision = Literal["APPROVE", "CHALLENGE", "DECLINE"]
 
-# Probability / amount thresholds for the rules engine
-_HIGH_SCORE_AMOUNT_PROB   = 0.9
-_HIGH_SCORE_AMOUNT_THRESH = 2000.0
-_CHALLENGE_PROB           = 0.7
-_EXCESSIVE_AMOUNT         = 5000.0
-_EXCESSIVE_AMOUNT_PROB    = 0.5
-_SUSPICIOUS_HOUR_PROB     = 0.4
-_SUSPICIOUS_HOURS         = frozenset(range(0, 6))   # midnight–5am
+# Thresholds are NOT defined here: they come from RulesConfig (config/rules.yaml),
+# which is hot-reloaded at runtime by app.rules.config.RulesConfigProvider.
 
 # Severity ordering used so override rules only escalate, never de-escalate
 _ESCALATION: dict[Decision, int] = {"APPROVE": 0, "CHALLENGE": 1, "DECLINE": 2}
@@ -28,10 +24,20 @@ class RuleResult:
     triggered_rules: tuple[str, ...]
 
 
-def apply_rules(prob: float, amount: float, hour: float) -> RuleResult:
+def apply_rules(
+    prob: float,
+    amount: float,
+    hour: float,
+    *,
+    config: RulesConfig,
+    challenge_prob: float,
+) -> RuleResult:
     """
-    Apply business rules in priority order.
-    Returns a RuleResult with the final decision and all triggered rule names.
+    Apply business rules in priority order. Pure function: no module state.
+
+    `config` supplies every threshold; `challenge_prob` is the already-resolved
+    numeric CHALLENGE cut-off (config.resolve_challenge_prob(model_threshold)),
+    so the "model_threshold" option is handled by the caller.
 
     Priority:
       1. High score + high amount → DECLINE
@@ -46,22 +52,22 @@ def apply_rules(prob: float, amount: float, hour: float) -> RuleResult:
     triggered_rules: list[str] = []
 
     # Primary rules
-    if prob >= _HIGH_SCORE_AMOUNT_PROB and amount > _HIGH_SCORE_AMOUNT_THRESH:
+    if prob >= config.high_score_amount_prob and amount > config.high_score_amount_threshold:
         decision = "DECLINE"
         reasons.append("high_score_high_amount")
         triggered_rules.append("HIGH_SCORE_HIGH_AMOUNT")
-    elif prob >= _CHALLENGE_PROB:
+    elif prob >= challenge_prob:
         decision = "CHALLENGE"
         reasons.append("high_score_requires_otp")
         triggered_rules.append("HIGH_SCORE")
 
     # Override rules — only escalate, never de-escalate
-    if amount > _EXCESSIVE_AMOUNT and prob > _EXCESSIVE_AMOUNT_PROB:
+    if amount > config.excessive_amount and prob > config.excessive_amount_prob:
         decision = "DECLINE"  # always escalates; no de-escalation possible
         reasons.append("excessive_amount")
         triggered_rules.append("EXCESSIVE_AMOUNT")
 
-    if prob > _SUSPICIOUS_HOUR_PROB and int(hour) in _SUSPICIOUS_HOURS:
+    if prob > config.suspicious_hour_prob and int(hour) in config.suspicious_hours:
         if _ESCALATION["CHALLENGE"] > _ESCALATION[decision]:
             decision = "CHALLENGE"
         reasons.append("suspicious_hour")

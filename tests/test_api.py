@@ -104,3 +104,14 @@ def test_audit_failure_does_not_fail_request(
     monkeypatch.setattr(main_module, "log_decision", _boom)
     response = client.post("/score_transaction", json=build_payload())
     assert response.status_code == 200
+
+
+def test_audit_row_carries_rules_config_provenance(
+    client: TestClient, audit_calls: list
+) -> None:
+    health = client.get("/health").json()
+    response = client.post("/score_transaction", json=build_payload())
+    assert response.status_code == 200
+    call = audit_calls[-1]
+    assert call["rules_config_version"] == health["rules_config_version"]
+    assert call["effective_challenge_prob"] == health["effective_challenge_prob"]

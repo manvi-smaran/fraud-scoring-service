@@ -1,0 +1,31 @@
+# Business-rule thresholds for app/rules/engine.py.
+#
+# Hot-reloaded: the API compares a content hash of this file on every request,
+# so a saved edit takes effect WITHOUT a restart or redeploy. EVERY key below is
+# required: an empty or partially written file is rejected. An invalid edit is
+# logged and ignored -- the last good config stays active (invalid at startup is
+# fatal). Edit atomically: write a temp file, then `mv` / os.replace() it here.
+# Override the location with the RULES_CONFIG_PATH env var.
+# The active values and a content hash are visible on GET /health.
+
+# HIGH_SCORE_HIGH_AMOUNT -> DECLINE when prob >= this AND amount > threshold
+high_score_amount_prob: 0.9
+high_score_amount_threshold: 2000.0
+
+# HIGH_SCORE -> CHALLENGE when prob >= challenge_prob.
+# Either a number in [0, 1] or the string "model_threshold", which uses the
+# F2-tuned threshold stored in the loaded model artifact (models/model.joblib).
+# The effective value must be <= high_score_amount_prob. The shipped model's
+# threshold is ~0.95, so model_threshold also requires raising
+# high_score_amount_prob (e.g. to 0.97); with the default 0.9 it is rejected.
+challenge_prob: 0.7
+# challenge_prob: model_threshold
+
+# EXCESSIVE_AMOUNT -> DECLINE when amount > excessive_amount AND prob > excessive_amount_prob
+excessive_amount: 5000.0
+excessive_amount_prob: 0.5
+
+# SUSPICIOUS_HOUR -> at least CHALLENGE when prob > suspicious_hour_prob AND
+# the (relative) hour is listed below. Hours are integers 0-23; [] disables the rule.
+suspicious_hour_prob: 0.4
+suspicious_hours: [0, 1, 2, 3, 4, 5]

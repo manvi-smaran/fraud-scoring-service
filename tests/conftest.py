@@ -23,3 +23,20 @@ def build_payload(**overrides: object) -> dict:
 @pytest.fixture
 def valid_payload() -> dict:
     return build_payload()
+
+
+DEFAULT_RULES: dict = {
+    "high_score_amount_prob": 0.9,
+    "high_score_amount_threshold": 2000.0,
+    "challenge_prob": 0.7,
+    "excessive_amount": 5000.0,
+    "excessive_amount_prob": 0.5,
+    "suspicious_hour_prob": 0.4,
+    "suspicious_hours": [0, 1, 2, 3, 4, 5],
+}
+
+
+def rules_yaml(**overrides: object) -> str:
+    """Return a COMPLETE rules.yaml (every key present), with optional overrides."""
+    merged = {**DEFAULT_RULES, **overrides}
+    return "".join(f"{key}: {value}\n" for key, value in merged.items())

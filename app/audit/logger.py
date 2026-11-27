@@ -3,19 +3,30 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
-from sqlalchemy import DateTime, Float, Integer, String, Text, create_engine
+from sqlalchemy import DateTime, Engine, Float, Integer, String, Text, create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 logger = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-_DB_URL = f"sqlite:///{ROOT / 'decisions.db'}"
+DB_URL_ENV = "FRAUD_AUDIT_DB_URL"
+DEFAULT_DB_URL = f"sqlite:///{ROOT / 'decisions.db'}"
+_TABLE = "decision_log"
+# Columns added after the original schema. Fixed identifiers/DDL only -- no user input.
+_ADDED_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("rules_config_version", "VARCHAR(32)"),
+    ("effective_challenge_prob", "FLOAT"),
+)
 
-engine = create_engine(_DB_URL, connect_args={"check_same_thread": False})
-SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
+
+def audit_db_url() -> str:
+    """Audit DB URL from FRAUD_AUDIT_DB_URL, falling back to <project>/decisions.db."""
+    return os.environ.get(DB_URL_ENV) or DEFAULT_DB_URL
 
 
 class Base(DeclarativeBase):
@@ -39,10 +50,38 @@ class DecisionLog(Base):
     decision: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
     triggered_rules_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     model_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    # Rules-config provenance: which thresholds produced this decision.
+    rules_config_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    effective_challenge_prob: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
-# Create table on first import — idempotent, safe to call repeatedly.
-Base.metadata.create_all(engine)
+def migrate_schema(target: Engine) -> None:
+    """Idempotently add columns missing from an existing decision_log table.
+
+    create_all() never alters existing tables, so DBs created before a column was
+    added get it here via ALTER TABLE ... ADD COLUMN (nullable, so old rows -> NULL).
+    """
+    existing = {col["name"] for col in inspect(target).get_columns(_TABLE)}
+    missing = [(name, ddl) for name, ddl in _ADDED_COLUMNS if name not in existing]
+    if not missing:
+        return
+    with target.begin() as conn:
+        for name, ddl in missing:
+            conn.execute(text(f"ALTER TABLE {_TABLE} ADD COLUMN {name} {ddl}"))
+            logger.info("Audit DB migrated: added column %s.%s", _TABLE, name)
+
+
+def init_db(target: Engine) -> None:
+    """Create the table if absent, then bring an existing table up to date."""
+    Base.metadata.create_all(target)
+    migrate_schema(target)
+
+
+engine = create_engine(audit_db_url(), connect_args={"check_same_thread": False})
+SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
+
+# Startup schema setup on first import -- idempotent, safe to call repeatedly.
+init_db(engine)
 
 
 def log_decision(
@@ -52,6 +91,8 @@ def log_decision(
     decision: str,
     triggered_rules: list[str],
     model_version: str,
+    rules_config_version: Optional[str] = None,
+    effective_challenge_prob: Optional[float] = None,
 ) -> None:
     """Persist a single fraud-scoring decision to the audit database.
 
@@ -68,6 +109,8 @@ def log_decision(
             decision=decision,
             triggered_rules_json=json.dumps(triggered_rules),
             model_version=model_version,
+            rules_config_version=rules_config_version,
+            effective_challenge_prob=effective_challenge_prob,
         )
         session.add(row)
         session.commit()
