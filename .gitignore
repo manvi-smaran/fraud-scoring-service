@@ -1,0 +1,19 @@
+data/creditcard.csv
+models/*.joblib
+models/*.pkl
+decisions.csv
+__pycache__/
+.ipynb_checkpoints/
+*.pyc
+.env
+venv/
+
+# Local artifacts / tooling
+decisions.db
+*.db
+.DS_Store
+.mypy_cache/
+.pytest_cache/
+.claude/
+.venv/
+*.log
